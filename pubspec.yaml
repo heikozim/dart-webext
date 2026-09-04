@@ -1,0 +1,23 @@
+name: webext
+description: >-
+  Shared Dart library for browser extensions (Manifest V3). Wraps the browser
+  APIs behind library-owned types, turns failure into values, and keeps per-tab
+  state across service worker restarts.
+version: 0.4.1
+
+# Vendored per project and pinned to a git tag, never consumed from a
+# registry (docs/ARCHITECTURE.md section 1).
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  # The only browser binding. Imported by browserkit and by nothing else.
+  chrome_extension: ^0.4.0
+  # DOM for the smoke extension example (example/smoke_extension); the
+  # library itself never imports it. Not dart:html, which is retired.
+  web: ^1.1.1
+
+dev_dependencies:
+  test: ^1.25.0
