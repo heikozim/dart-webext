@@ -1,0 +1,186 @@
+// dart-webext -- shared Dart library for browser extensions
+// Copyright (C) 2026 Heiko Zimmermann
+// SPDX-License-Identifier: BSD-3-Clause
+
+/// Fetches Cloudflare's published IP ranges and regenerates
+/// `lib/fmtkit/cloudflare_ranges.dart`.
+///
+/// Run from the package root:
+///
+///     dart run tool/generate_cloudflare_ranges.dart
+///
+/// The generated file carries its source URLs and fetch date, so a later
+/// guard can compare the compiled-in state against the published one
+/// without guessing. Every fetched line is validated through the
+/// library's own `IpAddress.tryParse` before it is emitted; anything
+/// unexpected aborts the run instead of producing a file.
+library;
+
+import 'dart:convert';
+import 'dart:io';
+
+// The parser alone, not the fmtkit entry point: that entry point exports
+// the file this tool writes, which must not need to exist for the tool
+// to run.
+import 'package:webext/fmtkit/ip_address.dart';
+
+// The published sources. Fixed here, never taken from input (SEC-012).
+const String _sourceV4 = 'https://www.cloudflare.com/ips-v4';
+const String _sourceV6 = 'https://www.cloudflare.com/ips-v6';
+
+const String _outputPath = 'lib/fmtkit/cloudflare_ranges.dart';
+
+// A range list is a handful of lines. A response larger than this is not
+// the range list (SEC-011).
+const int _maximumBodyBytes = 64 * 1024;
+
+const Duration _fetchTimeout = Duration(seconds: 30);
+
+/// Fetches both lists, validates every line and writes [_outputPath].
+Future<void> main() async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  List<String> v4Lines;
+  List<String> v6Lines;
+  try {
+    v4Lines = await _fetchLines(client, _sourceV4);
+    v6Lines = await _fetchLines(client, _sourceV6);
+  } finally {
+    client.close(force: true);
+  }
+
+  final v4Entries = v4Lines.map(_v4Entry).toList();
+  final v6Entries = v6Lines.map(_v6Entry).toList();
+  if (v4Entries.isEmpty || v6Entries.isEmpty) {
+    _fail('empty range list fetched; refusing to write $_outputPath');
+  }
+
+  final now = DateTime.now();
+  final date = '${now.year.toString().padLeft(4, '0')}-'
+      '${now.month.toString().padLeft(2, '0')}-'
+      '${now.day.toString().padLeft(2, '0')}';
+
+  File(_outputPath).writeAsStringSync(_fileContent(
+    date: date,
+    v4Entries: v4Entries,
+    v6Entries: v6Entries,
+  ));
+  stdout.writeln('wrote $_outputPath: '
+      '${v4Entries.length} IPv4 and ${v6Entries.length} IPv6 ranges, '
+      'fetched $date');
+}
+
+Future<List<String>> _fetchLines(HttpClient client, String url) async {
+  final request = await client.getUrl(Uri.parse(url)).timeout(_fetchTimeout);
+  final response = await request.close().timeout(_fetchTimeout);
+  if (response.statusCode != 200) {
+    _fail('$url answered ${response.statusCode}');
+  }
+  final bytes = <int>[];
+  await response.forEach((chunk) {
+    bytes.addAll(chunk);
+    if (bytes.length > _maximumBodyBytes) {
+      _fail('$url sent more than $_maximumBodyBytes bytes; '
+          'that is not a range list');
+    }
+  }).timeout(_fetchTimeout);
+  final lines = utf8
+      .decode(bytes)
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  if (lines.isEmpty) {
+    _fail('$url answered with an empty body');
+  }
+  return lines;
+}
+
+String _v4Entry(String line) {
+  final network = _network(line, maximumPrefixLength: 32);
+  final address = IpAddress.tryParse(network.address);
+  if (address is! IpV4Address) {
+    _fail('not an IPv4 network: $line');
+  }
+  final octets = address.octets;
+  return '  CidrV4(${octets[0]}, ${octets[1]}, ${octets[2]}, '
+      '${octets[3]}, ${network.prefixLength}), // $line';
+}
+
+String _v6Entry(String line) {
+  final network = _network(line, maximumPrefixLength: 128);
+  final address = IpAddress.tryParse(network.address);
+  if (address is! IpV6Address) {
+    _fail('not an IPv6 network: $line');
+  }
+  final groups = address.groups
+      .map((group) => group == 0 ? '0' : '0x${group.toRadixString(16)}')
+      .join(', ');
+  return '  CidrV6($groups, ${network.prefixLength}), // $line';
+}
+
+({String address, int prefixLength}) _network(
+  String line, {
+  required int maximumPrefixLength,
+}) {
+  final parts = line.split('/');
+  if (parts.length != 2) {
+    _fail('not in CIDR form: $line');
+  }
+  final prefixLength = int.tryParse(parts[1]);
+  // Range check, not just a type check (SEC-011).
+  if (prefixLength == null ||
+      prefixLength < 0 ||
+      prefixLength > maximumPrefixLength) {
+    _fail('prefix length out of range: $line');
+  }
+  return (address: parts[0], prefixLength: prefixLength);
+}
+
+String _fileContent({
+  required String date,
+  required List<String> v4Entries,
+  required List<String> v6Entries,
+}) =>
+    '''
+// dart-webext -- shared Dart library for browser extensions
+// Copyright (C) 2026 Heiko Zimmermann
+
+// GENERATED FILE -- do not edit by hand.
+//
+// Generated by tool/generate_cloudflare_ranges.dart, which fetches
+// Cloudflare's published ranges, validates every line through the
+// library's own IpAddress.tryParse and aborts on anything unexpected.
+//
+//   source:  $_sourceV4
+//            $_sourceV6
+//   fetched: $date
+//
+// The entries keep the order of the published lists, and every entry
+// carries the published line verbatim as a trailing comment, so a later
+// guard can compare this state against the source without guessing.
+
+/// Cloudflare's published IP ranges, compiled in.
+///
+/// Regenerate with `tool/generate_cloudflare_ranges.dart`; the header
+/// comment of this file carries the source URLs and the fetch date.
+library;
+
+import 'ip_address.dart';
+
+/// The published IPv4 ranges, in published order. Source and fetch date
+/// are in the header comment of this file.
+const List<CidrV4> cloudflareRangesV4 = [
+${v4Entries.join('\n')}
+];
+
+/// The published IPv6 ranges, in published order. Source and fetch date
+/// are in the header comment of this file.
+const List<CidrV6> cloudflareRangesV6 = [
+${v6Entries.join('\n')}
+];
+''';
+
+Never _fail(String message) {
+  stderr.writeln('generate_cloudflare_ranges: $message');
+  exit(2);
+}
