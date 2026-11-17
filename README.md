@@ -46,4 +46,4 @@ The library depends on `chrome_extension` (BSD-2-Clause) and
 `package:web` (BSD-3-Clause) from pub.dev; nothing is vendored into
 this tree.
 
-Copyright (C) 2026 Heiko Zimmermann <addon@heiko-zimmermann.com>
+Copyright (C) 2026 Heiko Zimmermann <code@heiko-zimmermann.com>
